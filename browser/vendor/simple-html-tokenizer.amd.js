@@ -10,17 +10,17 @@ define(
       return new F();
     };
 
-    function isSpace(char) {
-      return (/[\n\r\t ]/).test(char);
+    function isSpace(ch) {
+      return (/[\n\r\t ]/).test(ch);
     }
 
-    function isAlpha(char) {
-      return (/[A-Za-z]/).test(char);
+    function isAlpha(ch) {
+      return (/[A-Za-z]/).test(ch);
     }
 
     function Tokenizer(input) {
       this.input = input;
-      this.char = 0;
+      this.ch = 0;
       this.state = 'data';
       this.token = null;
     }
@@ -46,7 +46,7 @@ define(
         this.input += string;
         var tokens = [], token;
 
-        while (this.char < this.input.length) {
+        while (this.ch < this.input.length) {
           token = this.lex();
           if (token) { tokens.push(token); }
         }
@@ -61,11 +61,11 @@ define(
         }
       },
 
-      tag: function(Type, char) {
-        char = char.toLowerCase();
+      tag: function(Type, ch) {
+        ch = ch.toLowerCase();
 
         var lastToken = this.token;
-        this.token = new Type(char);
+        this.token = new Type(ch);
         this.state = 'tagName';
         return lastToken;
       },
@@ -74,17 +74,17 @@ define(
         this.token.selfClosing = true;
       },
 
-      attribute: function(char) {
-        this.token.startAttribute(char);
+      attribute: function(ch) {
+        this.token.startAttribute(ch);
         this.state = 'attributeName';
       },
 
-      addToAttributeName: function(char) {
-        this.token.addToAttributeName(char.toLowerCase());
+      addToAttributeName: function(ch) {
+        this.token.addToAttributeName(ch.toLowerCase());
       },
 
-      addToAttributeValue: function(char) {
-        this.token.addToAttributeValue(char);
+      addToAttributeValue: function(ch) {
+        this.token.addToAttributeValue(ch);
       },
 
       commentStart: function() {
@@ -94,8 +94,8 @@ define(
         return lastToken;
       },
 
-      addToComment: function(char) {
-        this.token.addChar(char);
+      addToComment: function(ch) {
+        this.token.addChar(ch);
       },
 
       emitData: function() {
@@ -112,66 +112,66 @@ define(
         return lastToken;
       },
 
-      addData: function(char) {
+      addData: function(ch) {
         if (this.token === null) {
           this.token = new Chars();
         }
 
-        this.token.addChar(char);
+        this.token.addChar(ch);
       },
 
       lex: function() {
-        var char = this.input.charAt(this.char++);
+        var ch = this.input.charAt(this.ch++);
 
-        if (char) {
-          // console.log(this.state, char);
-          return this.states[this.state].call(this, char);
+        if (ch) {
+          // console.log(this.state, ch);
+          return this.states[this.state].call(this, ch);
         } else {
           return 'EOF';
         }
       },
 
       states: {
-        data: function(char) {
-          if (char === "<") {
+        data: function(ch) {
+          if (ch === "<") {
             return this.emitData();
           } else {
-            this.addData(char);
+            this.addData(ch);
           }
         },
 
-        tagOpen: function(char) {
-          if (char === "!") {
+        tagOpen: function(ch) {
+          if (ch === "!") {
             this.state = 'markupDeclaration';
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'endTagOpen';
-          } else if (!isSpace(char)) {
-            return this.tag(StartTag, char);
+          } else if (!isSpace(ch)) {
+            return this.tag(StartTag, ch);
           }
         },
 
-        markupDeclaration: function(char) {
-          if (char === "-" && this.input[this.char] === "-") {
-            this.char++;
+        markupDeclaration: function(ch) {
+          if (ch === "-" && this.input[this.ch] === "-") {
+            this.ch++;
             this.commentStart();
           }
         },
 
-        commentStart: function(char) {
-          if (char === "-") {
+        commentStart: function(ch) {
+          if (ch === "-") {
             this.state = 'commentStartDash';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.addToComment(char);
+            this.addToComment(ch);
             this.state = 'comment';
           }
         },
 
-        commentStartDash: function(char) {
-          if (char === "-") {
+        commentStartDash: function(ch) {
+          if (ch === "-") {
             this.state = 'commentEnd';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
             this.addToComment("-");
@@ -179,132 +179,132 @@ define(
           }
         },
 
-        comment: function(char) {
-          if (char === "-") {
+        comment: function(ch) {
+          if (ch === "-") {
             this.state = 'commentEndDash';
           } else {
-            this.addToComment(char);
+            this.addToComment(ch);
           }
         },
 
-        commentEndDash: function(char) {
-          if (char === "-") {
+        commentEndDash: function(ch) {
+          if (ch === "-") {
             this.state = 'commentEnd';
           } else {
-            this.addToComment('-' + char);
+            this.addToComment('-' + ch);
             this.state = 'comment';
           }
         },
 
-        commentEnd: function(char) {
-          if (char === ">") {
+        commentEnd: function(ch) {
+          if (ch === ">") {
             return this.emitToken();
           }
         },
 
-        tagName: function(char) {
-          if (isSpace(char)) {
+        tagName: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'beforeAttributeName';
-          } else if(/[A-Za-z]/.test(char)) {
-            this.token.addToTagName(char);
-          } else if (char === ">") {
+          } else if(/[A-Za-z]/.test(ch)) {
+            this.token.addToTagName(ch);
+          } else if (ch === ">") {
             return this.emitToken();
           }
         },
 
-        beforeAttributeName: function(char) {
-          if (isSpace(char)) {
+        beforeAttributeName: function(ch) {
+          if (isSpace(ch)) {
             return;
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'selfClosingStartTag';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.attribute(char);
+            this.attribute(ch);
           }
         },
 
-        attributeName: function(char) {
-          if (isSpace(char)) {
+        attributeName: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'afterAttributeName';
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'selfClosingStartTag';
-          } else if (char === "=") {
+          } else if (ch === "=") {
             this.state = 'beforeAttributeValue';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.addToAttributeName(char);
+            this.addToAttributeName(ch);
           }
         },
 
-        beforeAttributeValue: function(char) {
-          if (isSpace(char)) {
+        beforeAttributeValue: function(ch) {
+          if (isSpace(ch)) {
             return;
-          } else if (char === '"') {
+          } else if (ch === '"') {
             this.state = 'attributeValueDoubleQuoted';
-          } else if (char === "'") {
+          } else if (ch === "'") {
             this.state = 'attributeValueSingleQuoted';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
             this.state = 'attributeValueUnquoted';
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        attributeValueDoubleQuoted: function(char) {
-          if (char === '"') {
+        attributeValueDoubleQuoted: function(ch) {
+          if (ch === '"') {
             this.state = 'afterAttributeValueQuoted';
           } else {
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        attributeValueSingleQuoted: function(char) {
-          if (char === "'") {
+        attributeValueSingleQuoted: function(ch) {
+          if (ch === "'") {
             this.state = 'afterAttributeValueQuoted';
           } else {
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        attributeValueUnquoted: function(char) {
-          if (isSpace(char)) {
+        attributeValueUnquoted: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'beforeAttributeName';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        afterAttributeValueQuoted: function(char) {
-          if (isSpace(char)) {
+        afterAttributeValueQuoted: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'beforeAttributeName';
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'selfClosingStartTag';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.char--;
+            this.ch--;
             this.state = 'beforeAttributeName';
           }
         },
 
-        selfClosingStartTag: function(char) {
-          if (char === ">") {
+        selfClosingStartTag: function(ch) {
+          if (ch === ">") {
             this.selfClosing();
             return this.emitToken();
           } else {
-            this.char--;
+            this.ch--;
             this.state = 'beforeAttributeName';
           }
         },
 
-        endTagOpen: function(char) {
-          if (isAlpha(char)) {
-            this.tag(EndTag, char);
+        endTagOpen: function(ch) {
+          if (isAlpha(ch)) {
+            this.tag(EndTag, ch);
           }
         }
       }
@@ -319,22 +319,22 @@ define(
     Tag.prototype = {
       constructor: Tag,
 
-      addToTagName: function(char) {
-        this.tagName += char;
+      addToTagName: function(ch) {
+        this.tagName += ch;
       },
 
-      startAttribute: function(char) {
-        this.currentAttribute = [char.toLowerCase(), null];
+      startAttribute: function(ch) {
+        this.currentAttribute = [ch.toLowerCase(), null];
         this.attributes.push(this.currentAttribute);
       },
 
-      addToAttributeName: function(char) {
-        this.currentAttribute[0] += char;
+      addToAttributeName: function(ch) {
+        this.currentAttribute[0] += ch;
       },
 
-      addToAttributeValue: function(char) {
+      addToAttributeValue: function(ch) {
         this.currentAttribute[1] = this.currentAttribute[1] || "";
-        this.currentAttribute[1] += char;
+        this.currentAttribute[1] += ch;
       },
 
       finalize: function() {
@@ -415,8 +415,8 @@ define(
       type: 'Chars',
       constructor: Chars,
 
-      addChar: function(char) {
-        this.chars += char;
+      addChar: function(ch) {
+        this.chars += ch;
       },
 
       toHTML: function() {
@@ -431,11 +431,11 @@ define(
     CommentToken.prototype = {
       type: 'CommentToken',
       constructor: CommentToken,
-  
+
       finalize: function() { return this; },
 
-      addChar: function(char) {
-        this.chars += char;
+      addChar: function(ch) {
+        this.chars += ch;
       },
 
       toHTML: function() {
@@ -473,6 +473,7 @@ define(
     function configure(name, value) {
       config[name] = value;
     }
+
 
     __exports__.Tokenizer = Tokenizer;
     __exports__.tokenize = tokenize;

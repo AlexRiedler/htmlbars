@@ -1,14 +1,15 @@
 define(
-  ["simple-html-tokenizer","htmlbars/ast","htmlbars/html-parser/process-token","exports"],
-  function(__dependency1__, __dependency2__, __dependency3__, __exports__) {
+  ["handlebars","simple-html-tokenizer","htmlbars/ast","htmlbars/html-parser/process-token","exports"],
+  function(__dependency1__, __dependency2__, __dependency3__, __dependency4__, __exports__) {
     "use strict";
-    var Tokenizer = __dependency1__.Tokenizer;
-    var Chars = __dependency1__.Chars;
-    var StartTag = __dependency1__.StartTag;
-    var EndTag = __dependency1__.EndTag;
-    var HTMLElement = __dependency2__.HTMLElement;
-    var BlockElement = __dependency2__.BlockElement;
-    var processToken = __dependency3__.processToken;
+    var Handlebars = __dependency1__.Handlebars;
+    var Tokenizer = __dependency2__.Tokenizer;
+    var Chars = __dependency2__.Chars;
+    var StartTag = __dependency2__.StartTag;
+    var EndTag = __dependency2__.EndTag;
+    var HTMLElement = __dependency3__.HTMLElement;
+    var BlockElement = __dependency3__.BlockElement;
+    var processToken = __dependency4__.processToken;
 
     function preprocess(html) {
       var ast = Handlebars.parse(html);
@@ -84,13 +85,13 @@ define(
       return elementStack[elementStack.length - 1];
     }
 
-    StartTag.prototype.addToAttributeValue = function(char) {
+    StartTag.prototype.addToAttributeValue = function(ch) {
       var value = this.currentAttribute[1] = this.currentAttribute[1] || [];
 
-      if (value.length && typeof value[value.length - 1] === 'string' && typeof char === 'string') {
-        value[value.length - 1] += char;
+      if (value.length && typeof value[value.length - 1] === 'string' && typeof ch === 'string') {
+        value[value.length - 1] += ch;
       } else {
-        value.push(char);
+        value.push(ch);
       }
     };
 

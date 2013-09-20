@@ -38,8 +38,9 @@ define(
 
       return {
         options: options,
-        args: array(args),
+        args: array(args)
       };
     }
+
     __exports__.prepareHelper = prepareHelper;
   });

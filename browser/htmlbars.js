@@ -31,99 +31,62 @@ var define, require;
   };
 })();
 
-define("htmlbars/runtime",
-  ["htmlbars/helpers","exports"],
+define("htmlbars/ast",
+  ["handlebars","exports"],
   function(__dependency1__, __exports__) {
     "use strict";
-    var helpers = __dependency1__.helpers;
+    var Handlebars = __dependency1__.Handlebars;
 
-    // These methods are runtime for now. If they are too expensive,
-    // I may inline them at compile-time.
-    var domHelpers = {
-      appendText: function(element, value) {
-        if (value === undefined) { return; }
-        element.appendChild(document.createTextNode(value));
-      },
+    function HTMLElement(tag, attributes, children, helpers) {
+      this.tag = tag;
+      this.attributes = attributes || [];
+      this.children = children || [];
+      this.helpers = helpers || [];
 
-      appendHTML: function(element, value) {
-        if (value === undefined) { return; }
-        element.appendChild(this.frag(element, value));
-      },
+      if (!attributes) { return; }
 
-      appendFragment: function(element, fragment) {
-        if (fragment === undefined) { return; }
-        element.appendChild(fragment);
-      },
-
-      ambiguousContents: function(element, context, string, escaped) {
-        var helper, value, args;
-
-        if (helper = helpers[string]) {
-          return this.helperContents(string, element, context, [], { element: element, escaped: escaped });
-        } else {
-          return this.resolveContents(context, [string], element, escaped);
-        }
-      },
-
-      helperContents: function(name, element, context, args, options) {
-        var helper = helpers[name];
-        options.element = element;
-        args.push(options);
-        return helper.apply(context, args);
-      },
-
-      resolveContents: function(context, parts, element, escaped) {
-        var helper = helpers.RESOLVE;
-        if (helper) {
-          return helper.apply(context, [parts, { element: element, escaped: escaped }]);
-        }
-
-        return parts.reduce(function(current, part) {
-          return current[part];
-        }, context)
-      },
-
-      ambiguousAttr: function(context, string, options) {
-        var helper;
-
-        if (helper = helpers[string]) {
-          throw new Error("helperAttr is not implemented yet");
-        } else {
-          return this.resolveInAttr(context, [string], options)
-        }
-      },
-
-      helperAttr: function(context, name, args, options) {
-        var helper = helpers[name];
-        args.push(options);
-        return helper.apply(context, args);
-      },
-
-      resolveInAttr: function(context, parts, options) {
-        var helper = helpers.RESOLVE_IN_ATTR;
-
-        if (helper) {
-          return helper.apply(context, [parts, options]);
-        }
-
-        return parts.reduce(function(current, part) {
-          return current[part];
-        }, context);
-      },
-
-      frag: function(element, string) {
-        /*global DocumentFragment*/
-        if (element instanceof DocumentFragment) {
-          element = document.createElement('div');
-        }
-
-        var range = document.createRange();
-        range.setStart(element, 0);
-        range.collapse(false);
-        return range.createContextualFragment(string);
+      for (var i=0, l=attributes.length; i<l; i++) {
+        var attribute = attributes[i];
+        attributes[attribute[0]] = attribute[1];
       }
     };
-    __exports__.domHelpers = domHelpers;
+
+    function appendChild(node) {
+      this.children.push(node);
+    }
+
+    HTMLElement.prototype = {
+      appendChild: appendChild,
+
+      removeAttr: function(name) {
+        var attributes = this.attributes, attribute;
+        delete attributes[name];
+        for (var i=0, l=attributes.length; i<l; i++) {
+          attribute = attributes[i];
+          if (attribute[0] === name) {
+            attributes.splice(i, 1);
+            break;
+          }
+        }
+      },
+
+      getAttr: function(name) {
+        var attributes = this.attributes;
+        if (attributes.length !== 1 || attributes[0] instanceof Handlebars.AST.MustacheNode) { return; }
+        return attributes[name][0];
+      }
+    }
+
+    function BlockElement(helper, children) {
+      this.helper = helper;
+      this.children = children || [];
+    };
+
+    BlockElement.prototype.appendChild = appendChild;
+
+
+    __exports__.HTMLElement = HTMLElement;
+    __exports__.BlockElement = BlockElement;
   });
 
 define("htmlbars/compiler/attr",
@@ -217,249 +180,24 @@ define("htmlbars/compiler/attr",
     __exports__.AttrCompiler = AttrCompiler;
   });
 
-define("htmlbars/compiler/stack",
+define("htmlbars/compiler/elements",
   ["exports"],
   function(__exports__) {
     "use strict";
-    // this file exists in anticipation of a more involved
-    // stack implementation involving temporary variables
-
-    function pushStack(stack, literal) {
-      stack.push({ literal: true, value: literal });
+    function pushElement(compiler) {
+      return "element" + (++compiler.elementNumber);
     }
 
-    function popStack(stack) {
-      var poppedValue = stack.pop();
-      return poppedValue.value;
-    }
-    __exports__.pushStack = pushStack;
-    __exports__.popStack = popStack;
-  });
-
-define("htmlbars/compiler/pass2",
-  ["htmlbars/compiler/utils","htmlbars/compiler/helpers","htmlbars/compiler/invoke","htmlbars/compiler/elements","htmlbars/compiler/stack","htmlbars/compiler/quoting","htmlbars/runtime","htmlbars/helpers","exports"],
-  function(__dependency1__, __dependency2__, __dependency3__, __dependency4__, __dependency5__, __dependency6__, __dependency7__, __dependency8__, __exports__) {
-    "use strict";
-    var processOpcodes = __dependency1__.processOpcodes;
-    var prepareHelper = __dependency2__.prepareHelper;
-    var call = __dependency3__.call;
-    var helper = __dependency3__.helper;
-    var pushElement = __dependency4__.pushElement;
-    var popElement = __dependency4__.popElement;
-    var topElement = __dependency4__.topElement;
-    var pushStack = __dependency5__.pushStack;
-    var popStack = __dependency5__.popStack;
-    var string = __dependency6__.string;
-    var quotedArray = __dependency6__.quotedArray;
-    var hash = __dependency6__.hash;
-    var domHelpers = __dependency7__.domHelpers;
-    var helpers = __dependency8__.helpers;
-
-    function Compiler2() {};
-
-    var compiler2 = Compiler2.prototype;
-
-    compiler2.compile = function(opcodes, options) {
-      this.output = [];
-      this.elementNumber = 0;
-      this.stackNumber = 0;
-      this.stack = [];
-      this.children = options.children;
-
-      this.output.push("return function template(context, options) {")
-      this.preamble();
-      processOpcodes(this, opcodes);
-      this.postamble();
-      this.output.push("};");
-
-      // console.debug(this.output.join("\n"));
-
-      // have the generated function close over the DOM helpers
-      var generator = new Function('dom', this.output.join("\n"));
-      return generator(domHelpers);
-    };
-
-    compiler2.preamble = function() {
-      this.children.forEach(function(child, i) {
-        this.push("var child" + i + " = " + child.toString());
-      }, this);
-
-      this.push("var element0, el");
-      this.push("var frag = element0 = document.createDocumentFragment()");
-    };
-
-    compiler2.postamble = function() {
-      this.output.push("return frag;");
-    };
-
-    compiler2.program = function(programId) {
-      pushStack(this.stack, programId);
-    };
-
-    compiler2.content = function(str) {
-      this.push(call([this.el(), 'appendChild'], helper('frag', this.el(), string(str))));
-    };
-
-    compiler2.push = function(string) {
-      this.output.push(string + ";");
-    };
-
-    compiler2.el = function() {
-      return topElement(this);
-    };
-
-    compiler2.id = function(parts) {
-      pushStack(this.stack, string('id'));
-      pushStack(this.stack, quotedArray(parts));
-    };
-
-    compiler2.literal = function(literal) {
-      pushStack(this.stack, string(typeof literal));
-      pushStack(this.stack, literal);
-    };
-
-    compiler2.stackLiteral = function(literal) {
-      pushStack(this.stack, literal);
-    };
-
-    compiler2.string = function(str) {
-      pushStack(this.stack, string('string'));
-      pushStack(this.stack, string(str));
-    };
-
-    compiler2.appendText = function() {
-      this.push(helper('appendText', this.el(), popStack(this.stack)));
-    };
-
-    compiler2.appendHTML = function() {
-      this.push(helper('appendHTML', this.el(), popStack(this.stack)));
-    };
-
-    compiler2.appendFragment = function() {
-      this.push(helper('appendFragment', this.el(), popStack(this.stack)));
+    function popElement(compiler) {
+      return "element" + (compiler.elementNumber--);
     }
 
-    compiler2.openElement = function(tagName) {
-      var elRef = pushElement(this);
-      this.push("var " + elRef + " = el = " + call('document.createElement', string(tagName)));
-    };
-
-    compiler2.attribute = function(name, child) {
-      var invokeRererender = call('el.setAttribute', string(name), call('child' + child, 'context', hash(['rerender:rerender'])));
-      var rerender = 'function rerender() { ' + invokeRererender + '}';
-      var options = hash(['rerender:' + rerender, 'element:el', 'attrName:' + string(name)]);
-      pushStack(this.stack, call('child' + child, 'context', options));
-
-      this.push(call('el.setAttribute', string(name), popStack(this.stack)));
-    };
-
-    compiler2.closeElement = function() {
-      var elRef = popElement(this);
-      this.push(call([this.el(), 'appendChild'], elRef));
-    };
-
-    compiler2.dynamic = function(parts, escaped) {
-      pushStack(this.stack, helper('resolveContents', 'context', quotedArray(parts), this.el(), escaped));
-    };
-
-    compiler2.ambiguous = function(str, escaped) {
-      pushStack(this.stack, helper('ambiguousContents', this.el(), 'context', string(str), escaped));
-    };
-
-    compiler2.helper = function(name, size, escaped) {
-      var prepared = prepareHelper(this.stack, size);
-      pushStack(this.stack, helper('helperContents', string(name), this.el(), 'context', prepared.args, hash(prepared.options)));
-    };
-
-    compiler2.nodeHelper = function(name, size) {
-      var prepared = prepareHelper(this.stack, size);
-      this.push(helper('helperContents', string(name), this.el(), 'context', prepared.args, hash(prepared.options)));
-    };
-
-    __exports__.Compiler2 = Compiler2;
-  });
-
-define("htmlbars/compiler/invoke",
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    function call(func) {
-      if (typeof func.join === 'function') {
-        func = func.join('.');
-      }
-
-      var params = [].slice.call(arguments, 1);
-      return func + "(" + params.join(", ") + ")";
+    function topElement(compiler) {
+      return "element" + compiler.elementNumber;
     }
-
-
-    function helper() {
-      var args = [].slice.call(arguments, 0);
-      args[0] = 'dom.' + args[0];
-      return call.apply(this, args);
-    }
-    __exports__.call = call;
-    __exports__.helper = helper;
-  });
-
-define("htmlbars/compiler/utils",
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    function processOpcodes(compiler, opcodes) {
-      opcodes.forEach(function(opcode) {
-        compiler[opcode.type].apply(compiler, opcode.params);
-      });
-    }
-
-    function compileAST(ast, options) {
-      // circular dependency hack
-      var Compiler1 = require('htmlbars/compiler/pass1').Compiler1;
-      var Compiler2 = require('htmlbars/compiler/pass2').Compiler2;
-
-      var compiler1 = new Compiler1(options),
-          compiler2 = new Compiler2(options);
-
-      var opcodes = compiler1.compile(ast);
-      return compiler2.compile(opcodes, {
-        children: compiler1.children
-      });
-    }
-    __exports__.processOpcodes = processOpcodes;
-    __exports__.compileAST = compileAST;
-  });
-
-define("htmlbars/compiler/quoting",
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    function escapeString(str) {
-      return str.replace(/'/g, "\\'");
-    }
-
-
-    function string(str) {
-      return "'" + escapeString(str) + "'";
-    }
-
-
-    function array(array) {
-      return "[" + array + "]";
-    }
-
-
-    function quotedArray(list) {
-      return array(list.map(string).join(", "));
-    }
-
-    function hash(pairs) {
-      return "{" + pairs.join(",") + "}";
-    }
-    __exports__.escapeString = escapeString;
-    __exports__.string = string;
-    __exports__.array = array;
-    __exports__.quotedArray = quotedArray;
-    __exports__.hash = hash;
+    __exports__.pushElement = pushElement;
+    __exports__.popElement = popElement;
+    __exports__.topElement = topElement;
   });
 
 define("htmlbars/compiler/helpers",
@@ -502,30 +240,34 @@ define("htmlbars/compiler/helpers",
 
       return {
         options: options,
-        args: array(args),
+        args: array(args)
       };
     }
+
     __exports__.prepareHelper = prepareHelper;
   });
 
-define("htmlbars/compiler/elements",
+define("htmlbars/compiler/invoke",
   ["exports"],
   function(__exports__) {
     "use strict";
-    function pushElement(compiler) {
-      return "element" + (++compiler.elementNumber);
+    function call(func) {
+      if (typeof func.join === 'function') {
+        func = func.join('.');
+      }
+
+      var params = [].slice.call(arguments, 1);
+      return func + "(" + params.join(", ") + ")";
     }
 
-    function popElement(compiler) {
-      return "element" + (compiler.elementNumber--);
-    }
 
-    function topElement(compiler) {
-      return "element" + compiler.elementNumber;
+    function helper() {
+      var args = [].slice.call(arguments, 0);
+      args[0] = 'dom.' + args[0];
+      return call.apply(this, args);
     }
-    __exports__.pushElement = pushElement;
-    __exports__.popElement = popElement;
-    __exports__.topElement = topElement;
+    __exports__.call = call;
+    __exports__.helper = helper;
   });
 
 define("htmlbars/compiler/pass1",
@@ -671,8 +413,8 @@ define("htmlbars/compiler/pass1",
       this.opcode('string', string.stringModeValue);
     };
 
-    compiler1.BOOLEAN = function(boolean) {
-      this.opcode('literal', boolean.stringModeValue);
+    compiler1.BOOLEAN = function(bool) {
+      this.opcode('literal', bool.stringModeValue);
     };
 
     compiler1.INTEGER = function(integer) {
@@ -726,7 +468,263 @@ define("htmlbars/compiler/pass1",
       }
     }
 
+
     __exports__.Compiler1 = Compiler1;
+  });
+
+define("htmlbars/compiler/pass2",
+  ["htmlbars/compiler/utils","htmlbars/compiler/helpers","htmlbars/compiler/invoke","htmlbars/compiler/elements","htmlbars/compiler/stack","htmlbars/compiler/quoting","htmlbars/runtime","htmlbars/helpers","exports"],
+  function(__dependency1__, __dependency2__, __dependency3__, __dependency4__, __dependency5__, __dependency6__, __dependency7__, __dependency8__, __exports__) {
+    "use strict";
+    var processOpcodes = __dependency1__.processOpcodes;
+    var prepareHelper = __dependency2__.prepareHelper;
+    var call = __dependency3__.call;
+    var helper = __dependency3__.helper;
+    var pushElement = __dependency4__.pushElement;
+    var popElement = __dependency4__.popElement;
+    var topElement = __dependency4__.topElement;
+    var pushStack = __dependency5__.pushStack;
+    var popStack = __dependency5__.popStack;
+    var string = __dependency6__.string;
+    var quotedArray = __dependency6__.quotedArray;
+    var hash = __dependency6__.hash;
+    var domHelpers = __dependency7__.domHelpers;
+    var helpers = __dependency8__.helpers;
+
+    function Compiler2() {};
+
+    var compiler2 = Compiler2.prototype;
+
+    compiler2.compile = function(opcodes, options) {
+      this.output = [];
+      this.elementNumber = 0;
+      this.stackNumber = 0;
+      this.stack = [];
+      this.children = options.children;
+
+      this.output.push("return function template(context, options) {")
+      this.preamble();
+      processOpcodes(this, opcodes);
+      this.postamble();
+      this.output.push("};");
+
+      // console.debug(this.output.join("\n"));
+
+      // have the generated function close over the DOM helpers
+      var generator = new Function('dom', this.output.join("\n"));
+      return generator(domHelpers);
+    };
+
+    compiler2.preamble = function() {
+      this.children.forEach(function(child, i) {
+        this.push("var child" + i + " = " + child.toString());
+      }, this);
+
+      this.push("var element0, el");
+      this.push("var frag = element0 = document.createDocumentFragment()");
+    };
+
+    compiler2.postamble = function() {
+      this.output.push("return frag;");
+    };
+
+    compiler2.program = function(programId) {
+      pushStack(this.stack, programId);
+    };
+
+    compiler2.content = function(str) {
+      this.push(call([this.el(), 'appendChild'], helper('frag', this.el(), string(str))));
+    };
+
+    compiler2.push = function(string) {
+      this.output.push(string + ";");
+    };
+
+    compiler2.el = function() {
+      return topElement(this);
+    };
+
+    compiler2.id = function(parts) {
+      pushStack(this.stack, string('id'));
+      pushStack(this.stack, quotedArray(parts));
+    };
+
+    compiler2.literal = function(literal) {
+      pushStack(this.stack, string(typeof literal));
+      pushStack(this.stack, literal);
+    };
+
+    compiler2.stackLiteral = function(literal) {
+      pushStack(this.stack, literal);
+    };
+
+    compiler2.string = function(str) {
+      pushStack(this.stack, string('string'));
+      pushStack(this.stack, string(str));
+    };
+
+    compiler2.appendText = function() {
+      this.push(helper('appendText', this.el(), popStack(this.stack)));
+    };
+
+    compiler2.appendHTML = function() {
+      this.push(helper('appendHTML', this.el(), popStack(this.stack)));
+    };
+
+    compiler2.appendFragment = function() {
+      this.push(helper('appendFragment', this.el(), popStack(this.stack)));
+    }
+
+    compiler2.openElement = function(tagName) {
+      var elRef = pushElement(this);
+      this.push("var " + elRef + " = el = " + call('document.createElement', string(tagName)));
+    };
+
+    compiler2.attribute = function(name, child) {
+      var invokeRererender = call('el.setAttribute', string(name), call('child' + child, 'context', hash(['rerender:rerender'])));
+      var rerender = 'function rerender() { ' + invokeRererender + '}';
+      var options = hash(['rerender:' + rerender, 'element:el', 'attrName:' + string(name)]);
+      pushStack(this.stack, call('child' + child, 'context', options));
+
+      this.push(call('el.setAttribute', string(name), popStack(this.stack)));
+    };
+
+    compiler2.closeElement = function() {
+      var elRef = popElement(this);
+      this.push(call([this.el(), 'appendChild'], elRef));
+    };
+
+    compiler2.dynamic = function(parts, escaped) {
+      pushStack(this.stack, helper('resolveContents', 'context', quotedArray(parts), this.el(), escaped));
+    };
+
+    compiler2.ambiguous = function(str, escaped) {
+      pushStack(this.stack, helper('ambiguousContents', this.el(), 'context', string(str), escaped));
+    };
+
+    compiler2.helper = function(name, size, escaped) {
+      var prepared = prepareHelper(this.stack, size);
+      pushStack(this.stack, helper('helperContents', string(name), this.el(), 'context', prepared.args, hash(prepared.options)));
+    };
+
+    compiler2.nodeHelper = function(name, size) {
+      var prepared = prepareHelper(this.stack, size);
+      this.push(helper('helperContents', string(name), this.el(), 'context', prepared.args, hash(prepared.options)));
+    };
+
+    __exports__.Compiler2 = Compiler2;
+  });
+
+define("htmlbars/compiler/quoting",
+  ["exports"],
+  function(__exports__) {
+    "use strict";
+    function escapeString(str) {
+      return str.replace(/'/g, "\\'");
+    }
+
+
+    function string(str) {
+      return "'" + escapeString(str) + "'";
+    }
+
+
+    function array(array) {
+      return "[" + array + "]";
+    }
+
+
+    function quotedArray(list) {
+      return array(list.map(string).join(", "));
+    }
+
+    function hash(pairs) {
+      return "{" + pairs.join(",") + "}";
+    }
+    __exports__.escapeString = escapeString;
+    __exports__.string = string;
+    __exports__.array = array;
+    __exports__.quotedArray = quotedArray;
+    __exports__.hash = hash;
+  });
+
+define("htmlbars/compiler/stack",
+  ["exports"],
+  function(__exports__) {
+    "use strict";
+    // this file exists in anticipation of a more involved
+    // stack implementation involving temporary variables
+
+    function pushStack(stack, literal) {
+      stack.push({ literal: true, value: literal });
+    }
+
+    function popStack(stack) {
+      var poppedValue = stack.pop();
+      return poppedValue.value;
+    }
+    __exports__.pushStack = pushStack;
+    __exports__.popStack = popStack;
+  });
+
+define("htmlbars/compiler/utils",
+  ["exports"],
+  function(__exports__) {
+    "use strict";
+    function processOpcodes(compiler, opcodes) {
+      opcodes.forEach(function(opcode) {
+        compiler[opcode.type].apply(compiler, opcode.params);
+      });
+    }
+
+    function compileAST(ast, options) {
+      // circular dependency hack
+      var Compiler1 = require('htmlbars/compiler/pass1').Compiler1;
+      var Compiler2 = require('htmlbars/compiler/pass2').Compiler2;
+
+      var compiler1 = new Compiler1(options),
+          compiler2 = new Compiler2(options);
+
+      var opcodes = compiler1.compile(ast);
+      return compiler2.compile(opcodes, {
+        children: compiler1.children
+      });
+    }
+    __exports__.processOpcodes = processOpcodes;
+    __exports__.compileAST = compileAST;
+  });
+
+define("htmlbars/compiler",
+  ["htmlbars/parser","htmlbars/compiler/utils","exports"],
+  function(__dependency1__, __dependency2__, __exports__) {
+    "use strict";
+    var preprocess = __dependency1__.preprocess;
+    var compileAST = __dependency2__.compileAST;
+
+    function compile(string, options) {
+      var ast = preprocess(string);
+      return compileAST(ast, options);
+    }
+    __exports__.compile = compile;
+  });
+
+define("htmlbars/helpers",
+  ["exports"],
+  function(__exports__) {
+    "use strict";
+    var helpers = {};
+
+    function registerHelper(name, callback) {
+      helpers[name] = callback;
+    }
+
+    function removeHelper(name) {
+      delete helpers[name];
+    }
+
+    __exports__.registerHelper = registerHelper;
+    __exports__.removeHelper = removeHelper;
+    __exports__.helpers = helpers;
   });
 
 define("htmlbars/html-parser/process-token",
@@ -828,17 +826,63 @@ define("htmlbars/html-parser/process-token",
     __exports__.config = config;
   });
 
-define("htmlbars/parser",
-  ["simple-html-tokenizer","htmlbars/ast","htmlbars/html-parser/process-token","exports"],
-  function(__dependency1__, __dependency2__, __dependency3__, __exports__) {
+define("htmlbars/macros",
+  ["htmlbars/html-parser/process-token","htmlbars/ast","exports"],
+  function(__dependency1__, __dependency2__, __exports__) {
     "use strict";
-    var Tokenizer = __dependency1__.Tokenizer;
-    var Chars = __dependency1__.Chars;
-    var StartTag = __dependency1__.StartTag;
-    var EndTag = __dependency1__.EndTag;
+    var config = __dependency1__.config;
     var HTMLElement = __dependency2__.HTMLElement;
-    var BlockElement = __dependency2__.BlockElement;
-    var processToken = __dependency3__.processToken;
+
+    var htmlMacros = {};
+
+    function registerMacro(name, test, mutate) {
+      htmlMacros[name] = { test: test, mutate: mutate };
+    };
+
+    function removeMacro(name) {
+      delete htmlMacros[name];
+    }
+
+    function processHTMLMacros(element) {
+      var mutated, newElement;
+
+      for (var prop in htmlMacros) {
+        var macro = htmlMacros[prop];
+        if (macro.test(element)) {
+          newElement = macro.mutate(element);
+          if (newElement === undefined) { newElement = element; }
+          mutated = true;
+          break;
+        }
+      }
+
+      if (!mutated) {
+        return element;
+      } else if (newElement instanceof HTMLElement) {
+        return processHTMLMacros(newElement);
+      } else {
+        return newElement;
+      }
+    }
+
+    // configure the HTML Parser
+    config.processHTMLMacros = processHTMLMacros;
+    __exports__.registerMacro = registerMacro;
+    __exports__.removeMacro = removeMacro;
+  });
+
+define("htmlbars/parser",
+  ["handlebars","simple-html-tokenizer","htmlbars/ast","htmlbars/html-parser/process-token","exports"],
+  function(__dependency1__, __dependency2__, __dependency3__, __dependency4__, __exports__) {
+    "use strict";
+    var Handlebars = __dependency1__.Handlebars;
+    var Tokenizer = __dependency2__.Tokenizer;
+    var Chars = __dependency2__.Chars;
+    var StartTag = __dependency2__.StartTag;
+    var EndTag = __dependency2__.EndTag;
+    var HTMLElement = __dependency3__.HTMLElement;
+    var BlockElement = __dependency3__.BlockElement;
+    var processToken = __dependency4__.processToken;
 
     function preprocess(html) {
       var ast = Handlebars.parse(html);
@@ -914,13 +958,13 @@ define("htmlbars/parser",
       return elementStack[elementStack.length - 1];
     }
 
-    StartTag.prototype.addToAttributeValue = function(char) {
+    StartTag.prototype.addToAttributeValue = function(ch) {
       var value = this.currentAttribute[1] = this.currentAttribute[1] || [];
 
-      if (value.length && typeof value[value.length - 1] === 'string' && typeof char === 'string') {
-        value[value.length - 1] += char;
+      if (value.length && typeof value[value.length - 1] === 'string' && typeof ch === 'string') {
+        value[value.length - 1] += ch;
       } else {
-        value.push(char);
+        value.push(ch);
       }
     };
 
@@ -931,6 +975,101 @@ define("htmlbars/parser",
     }
 
     __exports__.preprocess = preprocess;
+  });
+
+define("htmlbars/runtime",
+  ["htmlbars/helpers","exports"],
+  function(__dependency1__, __exports__) {
+    "use strict";
+    var helpers = __dependency1__.helpers;
+
+    // These methods are runtime for now. If they are too expensive,
+    // I may inline them at compile-time.
+    var domHelpers = {
+      appendText: function(element, value) {
+        if (value === undefined) { return; }
+        element.appendChild(document.createTextNode(value));
+      },
+
+      appendHTML: function(element, value) {
+        if (value === undefined) { return; }
+        element.appendChild(this.frag(element, value));
+      },
+
+      appendFragment: function(element, fragment) {
+        if (fragment === undefined) { return; }
+        element.appendChild(fragment);
+      },
+
+      ambiguousContents: function(element, context, string, escaped) {
+        var helper, value, args;
+
+        if (helper = helpers[string]) {
+          return this.helperContents(string, element, context, [], { element: element, escaped: escaped });
+        } else {
+          return this.resolveContents(context, [string], element, escaped);
+        }
+      },
+
+      helperContents: function(name, element, context, args, options) {
+        var helper = helpers[name];
+        options.element = element;
+        args.push(options);
+        return helper.apply(context, args);
+      },
+
+      resolveContents: function(context, parts, element, escaped) {
+        var helper = helpers.RESOLVE;
+        if (helper) {
+          return helper.apply(context, [parts, { element: element, escaped: escaped }]);
+        }
+
+        return parts.reduce(function(current, part) {
+          return current[part];
+        }, context)
+      },
+
+      ambiguousAttr: function(context, string, options) {
+        var helper;
+
+        if (helper = helpers[string]) {
+          throw new Error("helperAttr is not implemented yet");
+        } else {
+          return this.resolveInAttr(context, [string], options)
+        }
+      },
+
+      helperAttr: function(context, name, args, options) {
+        var helper = helpers[name];
+        args.push(options);
+        return helper.apply(context, args);
+      },
+
+      resolveInAttr: function(context, parts, options) {
+        var helper = helpers.RESOLVE_IN_ATTR;
+
+        if (helper) {
+          return helper.apply(context, [parts, options]);
+        }
+
+        return parts.reduce(function(current, part) {
+          return current[part];
+        }, context);
+      },
+
+      frag: function(element, string) {
+        /*global DocumentFragment*/
+        if (element instanceof DocumentFragment) {
+          element = document.createElement('div');
+        }
+
+        var range = document.createRange();
+        range.setStart(element, 0);
+        range.collapse(false);
+        return range.createContextualFragment(string);
+      }
+    };
+    __exports__.domHelpers = domHelpers;
   });
 
 define("htmlbars/utils",
@@ -945,139 +1084,6 @@ define("htmlbars/utils",
     }
 
     __exports__.merge = merge;
-  });
-
-define("htmlbars/compiler",
-  ["htmlbars/parser","htmlbars/compiler/utils","exports"],
-  function(__dependency1__, __dependency2__, __exports__) {
-    "use strict";
-    var preprocess = __dependency1__.preprocess;
-    var compileAST = __dependency2__.compileAST;
-
-    function compile(string, options) {
-      var ast = preprocess(string);
-      return compileAST(ast, options);
-    }
-    __exports__.compile = compile;
-  });
-
-define("htmlbars/helpers",
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    var helpers = {};
-
-    function registerHelper(name, callback) {
-      helpers[name] = callback;
-    }
-
-    function removeHelper(name) {
-      delete helpers[name];
-    }
-
-    __exports__.registerHelper = registerHelper;
-    __exports__.removeHelper = removeHelper;
-    __exports__.helpers = helpers;
-  });
-
-define("htmlbars/ast",
-  ["exports"],
-  function(__exports__) {
-    "use strict";
-    function HTMLElement(tag, attributes, children, helpers) {
-      this.tag = tag;
-      this.attributes = attributes || [];
-      this.children = children || [];
-      this.helpers = helpers || [];
-
-      if (!attributes) { return; }
-
-      for (var i=0, l=attributes.length; i<l; i++) {
-        var attribute = attributes[i];
-        attributes[attribute[0]] = attribute[1];
-      }
-    };
-
-    function appendChild(node) {
-      this.children.push(node);
-    }
-
-    HTMLElement.prototype = {
-      appendChild: appendChild,
-
-      removeAttr: function(name) {
-        var attributes = this.attributes, attribute;
-        delete attributes[name];
-        for (var i=0, l=attributes.length; i<l; i++) {
-          attribute = attributes[i];
-          if (attribute[0] === name) {
-            attributes.splice(i, 1);
-            break;
-          }
-        }
-      },
-
-      getAttr: function(name) {
-        var attributes = this.attributes;
-        if (attributes.length !== 1 || attributes[0] instanceof Handlebars.AST.MustacheNode) { return; }
-        return attributes[name][0];
-      }
-    }
-
-    function BlockElement(helper, children) {
-      this.helper = helper;
-      this.children = children || [];
-    };
-
-    BlockElement.prototype.appendChild = appendChild;
-
-    __exports__.HTMLElement = HTMLElement;
-    __exports__.BlockElement = BlockElement;
-  });
-
-define("htmlbars/macros",
-  ["htmlbars/html-parser/process-token","htmlbars/ast","exports"],
-  function(__dependency1__, __dependency2__, __exports__) {
-    "use strict";
-    var config = __dependency1__.config;
-    var HTMLElement = __dependency2__.HTMLElement;
-
-    var htmlMacros = {};
-
-    function registerMacro(name, test, mutate) {
-      htmlMacros[name] = { test: test, mutate: mutate };
-    };
-
-    function removeMacro(name) {
-      delete htmlMacros[name];
-    }
-
-    function processHTMLMacros(element) {
-      var mutated, newElement;
-
-      for (var prop in htmlMacros) {
-        var macro = htmlMacros[prop];
-        if (macro.test(element)) {
-          newElement = macro.mutate(element);
-          if (newElement === undefined) { newElement = element; }
-          mutated = true;
-          break;
-        }
-      }
-
-      if (!mutated) {
-        return element;
-      } else if (newElement instanceof HTMLElement) {
-        return processHTMLMacros(newElement);
-      } else {
-        return newElement;
-      }
-    }
-
-    // configure the HTML Parser
-    config.processHTMLMacros = processHTMLMacros;
-    __exports__.registerMacro = registerMacro;
-    __exports__.removeMacro = removeMacro;
   });
 
 define("htmlbars",
@@ -1115,17 +1121,17 @@ define("simple-html-tokenizer",
       return new F();
     };
 
-    function isSpace(char) {
-      return (/[\n\r\t ]/).test(char);
+    function isSpace(ch) {
+      return (/[\n\r\t ]/).test(ch);
     }
 
-    function isAlpha(char) {
-      return (/[A-Za-z]/).test(char);
+    function isAlpha(ch) {
+      return (/[A-Za-z]/).test(ch);
     }
 
     function Tokenizer(input) {
       this.input = input;
-      this.char = 0;
+      this.ch = 0;
       this.state = 'data';
       this.token = null;
     }
@@ -1151,7 +1157,7 @@ define("simple-html-tokenizer",
         this.input += string;
         var tokens = [], token;
 
-        while (this.char < this.input.length) {
+        while (this.ch < this.input.length) {
           token = this.lex();
           if (token) { tokens.push(token); }
         }
@@ -1166,11 +1172,11 @@ define("simple-html-tokenizer",
         }
       },
 
-      tag: function(Type, char) {
-        char = char.toLowerCase();
+      tag: function(Type, ch) {
+        ch = ch.toLowerCase();
 
         var lastToken = this.token;
-        this.token = new Type(char);
+        this.token = new Type(ch);
         this.state = 'tagName';
         return lastToken;
       },
@@ -1179,17 +1185,17 @@ define("simple-html-tokenizer",
         this.token.selfClosing = true;
       },
 
-      attribute: function(char) {
-        this.token.startAttribute(char);
+      attribute: function(ch) {
+        this.token.startAttribute(ch);
         this.state = 'attributeName';
       },
 
-      addToAttributeName: function(char) {
-        this.token.addToAttributeName(char.toLowerCase());
+      addToAttributeName: function(ch) {
+        this.token.addToAttributeName(ch.toLowerCase());
       },
 
-      addToAttributeValue: function(char) {
-        this.token.addToAttributeValue(char);
+      addToAttributeValue: function(ch) {
+        this.token.addToAttributeValue(ch);
       },
 
       commentStart: function() {
@@ -1199,8 +1205,8 @@ define("simple-html-tokenizer",
         return lastToken;
       },
 
-      addToComment: function(char) {
-        this.token.addChar(char);
+      addToComment: function(ch) {
+        this.token.addChar(ch);
       },
 
       emitData: function() {
@@ -1217,66 +1223,66 @@ define("simple-html-tokenizer",
         return lastToken;
       },
 
-      addData: function(char) {
+      addData: function(ch) {
         if (this.token === null) {
           this.token = new Chars();
         }
 
-        this.token.addChar(char);
+        this.token.addChar(ch);
       },
 
       lex: function() {
-        var char = this.input.charAt(this.char++);
+        var ch = this.input.charAt(this.ch++);
 
-        if (char) {
-          // console.log(this.state, char);
-          return this.states[this.state].call(this, char);
+        if (ch) {
+          // console.log(this.state, ch);
+          return this.states[this.state].call(this, ch);
         } else {
           return 'EOF';
         }
       },
 
       states: {
-        data: function(char) {
-          if (char === "<") {
+        data: function(ch) {
+          if (ch === "<") {
             return this.emitData();
           } else {
-            this.addData(char);
+            this.addData(ch);
           }
         },
 
-        tagOpen: function(char) {
-          if (char === "!") {
+        tagOpen: function(ch) {
+          if (ch === "!") {
             this.state = 'markupDeclaration';
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'endTagOpen';
-          } else if (!isSpace(char)) {
-            return this.tag(StartTag, char);
+          } else if (!isSpace(ch)) {
+            return this.tag(StartTag, ch);
           }
         },
 
-        markupDeclaration: function(char) {
-          if (char === "-" && this.input[this.char] === "-") {
-            this.char++;
+        markupDeclaration: function(ch) {
+          if (ch === "-" && this.input[this.ch] === "-") {
+            this.ch++;
             this.commentStart();
           }
         },
 
-        commentStart: function(char) {
-          if (char === "-") {
+        commentStart: function(ch) {
+          if (ch === "-") {
             this.state = 'commentStartDash';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.addToComment(char);
+            this.addToComment(ch);
             this.state = 'comment';
           }
         },
 
-        commentStartDash: function(char) {
-          if (char === "-") {
+        commentStartDash: function(ch) {
+          if (ch === "-") {
             this.state = 'commentEnd';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
             this.addToComment("-");
@@ -1284,132 +1290,132 @@ define("simple-html-tokenizer",
           }
         },
 
-        comment: function(char) {
-          if (char === "-") {
+        comment: function(ch) {
+          if (ch === "-") {
             this.state = 'commentEndDash';
           } else {
-            this.addToComment(char);
+            this.addToComment(ch);
           }
         },
 
-        commentEndDash: function(char) {
-          if (char === "-") {
+        commentEndDash: function(ch) {
+          if (ch === "-") {
             this.state = 'commentEnd';
           } else {
-            this.addToComment('-' + char);
+            this.addToComment('-' + ch);
             this.state = 'comment';
           }
         },
 
-        commentEnd: function(char) {
-          if (char === ">") {
+        commentEnd: function(ch) {
+          if (ch === ">") {
             return this.emitToken();
           }
         },
 
-        tagName: function(char) {
-          if (isSpace(char)) {
+        tagName: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'beforeAttributeName';
-          } else if(/[A-Za-z]/.test(char)) {
-            this.token.addToTagName(char);
-          } else if (char === ">") {
+          } else if(/[A-Za-z]/.test(ch)) {
+            this.token.addToTagName(ch);
+          } else if (ch === ">") {
             return this.emitToken();
           }
         },
 
-        beforeAttributeName: function(char) {
-          if (isSpace(char)) {
+        beforeAttributeName: function(ch) {
+          if (isSpace(ch)) {
             return;
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'selfClosingStartTag';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.attribute(char);
+            this.attribute(ch);
           }
         },
 
-        attributeName: function(char) {
-          if (isSpace(char)) {
+        attributeName: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'afterAttributeName';
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'selfClosingStartTag';
-          } else if (char === "=") {
+          } else if (ch === "=") {
             this.state = 'beforeAttributeValue';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.addToAttributeName(char);
+            this.addToAttributeName(ch);
           }
         },
 
-        beforeAttributeValue: function(char) {
-          if (isSpace(char)) {
+        beforeAttributeValue: function(ch) {
+          if (isSpace(ch)) {
             return;
-          } else if (char === '"') {
+          } else if (ch === '"') {
             this.state = 'attributeValueDoubleQuoted';
-          } else if (char === "'") {
+          } else if (ch === "'") {
             this.state = 'attributeValueSingleQuoted';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
             this.state = 'attributeValueUnquoted';
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        attributeValueDoubleQuoted: function(char) {
-          if (char === '"') {
+        attributeValueDoubleQuoted: function(ch) {
+          if (ch === '"') {
             this.state = 'afterAttributeValueQuoted';
           } else {
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        attributeValueSingleQuoted: function(char) {
-          if (char === "'") {
+        attributeValueSingleQuoted: function(ch) {
+          if (ch === "'") {
             this.state = 'afterAttributeValueQuoted';
           } else {
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        attributeValueUnquoted: function(char) {
-          if (isSpace(char)) {
+        attributeValueUnquoted: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'beforeAttributeName';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.addToAttributeValue(char);
+            this.addToAttributeValue(ch);
           }
         },
 
-        afterAttributeValueQuoted: function(char) {
-          if (isSpace(char)) {
+        afterAttributeValueQuoted: function(ch) {
+          if (isSpace(ch)) {
             this.state = 'beforeAttributeName';
-          } else if (char === "/") {
+          } else if (ch === "/") {
             this.state = 'selfClosingStartTag';
-          } else if (char === ">") {
+          } else if (ch === ">") {
             return this.emitToken();
           } else {
-            this.char--;
+            this.ch--;
             this.state = 'beforeAttributeName';
           }
         },
 
-        selfClosingStartTag: function(char) {
-          if (char === ">") {
+        selfClosingStartTag: function(ch) {
+          if (ch === ">") {
             this.selfClosing();
             return this.emitToken();
           } else {
-            this.char--;
+            this.ch--;
             this.state = 'beforeAttributeName';
           }
         },
 
-        endTagOpen: function(char) {
-          if (isAlpha(char)) {
-            this.tag(EndTag, char);
+        endTagOpen: function(ch) {
+          if (isAlpha(ch)) {
+            this.tag(EndTag, ch);
           }
         }
       }
@@ -1424,22 +1430,22 @@ define("simple-html-tokenizer",
     Tag.prototype = {
       constructor: Tag,
 
-      addToTagName: function(char) {
-        this.tagName += char;
+      addToTagName: function(ch) {
+        this.tagName += ch;
       },
 
-      startAttribute: function(char) {
-        this.currentAttribute = [char.toLowerCase(), null];
+      startAttribute: function(ch) {
+        this.currentAttribute = [ch.toLowerCase(), null];
         this.attributes.push(this.currentAttribute);
       },
 
-      addToAttributeName: function(char) {
-        this.currentAttribute[0] += char;
+      addToAttributeName: function(ch) {
+        this.currentAttribute[0] += ch;
       },
 
-      addToAttributeValue: function(char) {
+      addToAttributeValue: function(ch) {
         this.currentAttribute[1] = this.currentAttribute[1] || "";
-        this.currentAttribute[1] += char;
+        this.currentAttribute[1] += ch;
       },
 
       finalize: function() {
@@ -1520,8 +1526,8 @@ define("simple-html-tokenizer",
       type: 'Chars',
       constructor: Chars,
 
-      addChar: function(char) {
-        this.chars += char;
+      addChar: function(ch) {
+        this.chars += ch;
       },
 
       toHTML: function() {
@@ -1536,11 +1542,11 @@ define("simple-html-tokenizer",
     CommentToken.prototype = {
       type: 'CommentToken',
       constructor: CommentToken,
-  
+
       finalize: function() { return this; },
 
-      addChar: function(char) {
-        this.chars += char;
+      addChar: function(ch) {
+        this.chars += ch;
       },
 
       toHTML: function() {
@@ -1578,6 +1584,7 @@ define("simple-html-tokenizer",
     function configure(name, value) {
       config[name] = value;
     }
+
 
     __exports__.Tokenizer = Tokenizer;
     __exports__.tokenize = tokenize;

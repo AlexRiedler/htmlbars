@@ -141,8 +141,8 @@ define(
       this.opcode('string', string.stringModeValue);
     };
 
-    compiler1.BOOLEAN = function(boolean) {
-      this.opcode('literal', boolean.stringModeValue);
+    compiler1.BOOLEAN = function(bool) {
+      this.opcode('literal', bool.stringModeValue);
     };
 
     compiler1.INTEGER = function(integer) {
@@ -195,6 +195,7 @@ define(
         compiler.opcode('appendHTML');
       }
     }
+
 
     __exports__.Compiler1 = Compiler1;
   });

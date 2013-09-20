@@ -1,7 +1,9 @@
 define(
-  ["exports"],
-  function(__exports__) {
+  ["handlebars","exports"],
+  function(__dependency1__, __exports__) {
     "use strict";
+    var Handlebars = __dependency1__.Handlebars;
+
     function HTMLElement(tag, attributes, children, helpers) {
       this.tag = tag;
       this.attributes = attributes || [];
@@ -48,6 +50,7 @@ define(
     };
 
     BlockElement.prototype.appendChild = appendChild;
+
 
     __exports__.HTMLElement = HTMLElement;
     __exports__.BlockElement = BlockElement;
